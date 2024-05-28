@@ -1,0 +1,282 @@
+<html>
+
+<head>
+ 
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.11.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet@2.2.2/dist/posenet.min.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@3.11.0/dist/tf-core.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@3.11.0/dist/tf-converter.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@3.11.0/dist/tf-backend-webgl.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@0.0.6/dist/pose-detection.min.js"></script>
+  
+
+    <!-- <script src="https://unpkg.com/@tensorflow/tfjs-core@2.4.0/dist/tf-core.js"></script>
+    <script src="https://unpkg.com/@tensorflow/tfjs-converter@2.4.0/dist/tf-converter.js"></script>
+    <script src="https://unpkg.com/@tensorflow/tfjs-backend-webgl@2.4.0/dist/tf-backend-webgl.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script> -->
+ 
+    <style>
+        canvas {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            top: 50%;
+            left: 50%;
+
+        }
+
+        video {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            top: 50%;
+            left: 50%;
+
+        }
+    </style>
+</head>
+
+<body>
+    <video id="video" width="640" height="480" autoplay muted playsinline></video>
+    <canvas id="canvas"></canvas>
+</body>
+
+<script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById("canvas");
+    const context = canvas.getContext("2d");
+
+    navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        .then(function (stream) {
+            video.srcObject = stream;
+        });
+
+    posenet.load().then(model => {
+        video.onloadeddata = (e) => {
+            predict();
+        }
+        function predict() {
+            model.estimateSinglePose(video).then(pose => {
+                canvas.width = video.width;
+                canvas.height = video.height;
+                drawRightSideKeypoints(pose.keypoints, 0.6, context);
+                drawRightSideSkeleton(pose.keypoints, 0.6, context);
+                
+                // key points 찿기
+                const rightHip = pose.keypoints.find(kp => kp.part === 'rightHip').position;
+                const rightShoulder = pose.keypoints.find(kp => kp.part === 'rightShoulder').position;
+                const rightKnee = pose.keypoints.find(kp => kp.part === 'rightKnee').position;
+                const rightAnkle = pose.keypoints.find(kp => kp.part === 'rightAnkle').position;
+
+                // 추출된 키포인트를 사용하여 곡선 그리기
+                drawAngleCurve(context, rightShoulder, rightHip, rightKnee,rightAnkle);
+
+                // 각도 계산
+                const angleRightWaist = calculateAngle(rightShoulder, rightHip, rightKnee);
+                const angleRightknee = calculateAngle(rightHip, rightKnee, rightAnkle);
+
+                console.log('허리 각도:', angleRightWaist);
+                console.log('무릎 각도:', angleRightknee);
+
+                
+                context.font = "bold 25px Arial";
+                if (angleRightWaist>70 && angleRightknee >90){
+                    playAudio('waist_knee.mp3');
+                    context.fillStyle = "red";
+                }
+
+                if (angleRightWaist <= 70 && angleRightWaist >=50) {
+                    context.fillStyle = "green"; // 각도가 60도 이하일 때 초록색으로 변경
+                }
+                else if(angleRightWaist >70){
+                    playAudio('waist.mp3');
+                    context.fillStyle = "red";
+                }
+                else if(angleRightWaist <50){
+                    playAudio('waist2.mp3');
+                    context.fillStyle = "red";
+                }
+                // 각도 표출
+                context.fillText(" 허리 각도: " + angleRightWaist.toFixed(2) + "°", rightHip.x-230, rightHip.y);
+
+                // 각도 위치 표시
+                drawCircle(rightHip.x, rightHip.y, "red", 5);
+                //drawCircle(rightHip.x, rightHip.y, "red", 5);
+
+                // 각도 표출
+                context.font = "bold 25px Arial";
+                if (angleRightknee <= 90 && angleRightknee >=70) {
+                    context.fillStyle = "green"; 
+                }
+                else if(angleRightknee > 90){
+                    playAudio('knee.mp3');
+                    context.fillStyle = "red";
+                }
+
+                if (angleRightWaist <= 70 && angleRightWaist>=50 && angleRightknee <= 90 ) {
+                    playAudio('complete.mp3');    
+                    context.fillStyle = "green"; 
+                }
+                context.fillText("무릎 각도: " + angleRightknee.toFixed(2) + "°", rightKnee.x, rightKnee.y-10);
+
+                // 각도 위치 표시
+                drawCircle(rightKnee.x, rightKnee.y, "red", 5);
+            });
+            requestAnimationFrame(predict);
+        }
+    })
+
+    const color = 'aqua';
+    const boundingBoxColor = 'red';
+    const lineWidth = 2;
+
+    let isAudioPlaying = false;
+
+function playAudio(audioFilePath) {
+    if (!isAudioPlaying) {
+        var audio = new Audio(audioFilePath);
+        audio.play();
+        isAudioPlaying = true;
+        audio.onended = function() {
+        isAudioPlaying = false;
+        };
+    }
+}
+
+    function drawAngleCurve(ctx, shoulder, hip, knee , ankle) {
+        // 허리선과 허벅지선의 1/3 지점 계산
+        const midShoulderHip = {
+            x: shoulder.x + 2 * (hip.x - shoulder.x) / 3,
+            y: shoulder.y + 2 * (hip.y - shoulder.y) / 3
+        };
+        const midHipKnee = {
+            x: knee.x + 2 * (hip.x - knee.x) / 3,
+            y: knee.y + 2 * (hip.y - knee.y) / 3
+        };
+        const controlPoint = {
+            x: midHipKnee.x+20,
+            y: midHipKnee.y-40  // 제어점을 이동하여 곡선의 볼록을 조정
+        };
+
+        // 곡선 그리기
+        ctx.beginPath();
+        ctx.moveTo(midShoulderHip.x, midShoulderHip.y);
+        ctx.quadraticCurveTo(controlPoint.x, controlPoint.y, midHipKnee.x, midHipKnee.y);
+        ctx.strokeStyle = 'red'; // 곡선 색상
+        ctx.lineWidth = 3; // 곡선 두께
+        ctx.stroke();
+
+        // 무릎과 발목의 1/3 지점 계산
+        const midHipKnee2 = {
+            x: hip.x + 2 * (knee.x - hip.x) / 3,
+         y: hip.y + 2 * (knee.y - hip.y) / 3
+        };
+        // 무릎과 발목의 1/3 지점 계산
+        const midKneeAnkle = {
+            x: ankle.x + 2 * (knee.x - ankle.x) / 3,
+            y: ankle.y + 2 * (knee.y - ankle.y) / 3
+        };
+        // 제어점을 아래로 이동하여 곡선의 볼록을 조정
+        const controlPoint2 = {
+            x: midHipKnee2.x - 50, // 제어점 위치 조정으로 곡선의 방향을 조절할 수 있음
+            y: midHipKnee2.y + 30
+        };
+        // 두 번째 곡선 그리기 (허벅지와 종아리 사이)
+        ctx.beginPath();
+        ctx.moveTo(midKneeAnkle.x, midKneeAnkle.y);
+        ctx.quadraticCurveTo(controlPoint2.x, controlPoint2.y, midHipKnee2.x, midHipKnee2.y);
+        ctx.strokeStyle = 'red'; // 두 번째 곡선의 색상을 구분하기 위해 변경
+        ctx.lineWidth = 3;
+        ctx.stroke();
+    }
+
+    // 3개 포인트 사이 각도 계산 
+    function calculateAngle(pointA, pointB, pointC) {
+        const radians = Math.atan2(pointC.y - pointB.y, pointC.x - pointB.x) - Math.atan2(pointA.y - pointB.y, pointA.x - pointB.x);
+        let angle = radians * (180 / Math.PI);
+        angle = Math.abs(angle);
+        angle = angle > 180 ? 360 - angle : angle;
+        return angle;
+    }
+
+    // 측정 관절 강조 표시 
+    function drawCircle(x, y, color, radius) {
+        context.beginPath();
+        context.arc(x, y, radius, 0, 2 * Math.PI);
+        context.fillStyle = color;
+        context.fill();
+    }
+
+    function toTuple({ y, x }) {
+        return [y, x];
+    }
+
+    /**
+     * 포인트 그리는 함수
+     **/
+    function drawPoint(ctx, y, x, r, color) {
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, 2 * Math.PI);
+        ctx.fillStyle = color;
+        ctx.fill();
+    }
+
+    /**
+     * 관절에 선 그리는 함수
+     */
+    function drawSegment([ay, ax], [by, bx], color, scale, ctx) {
+        ctx.beginPath();
+        ctx.moveTo(ax * scale, ay * scale);
+        ctx.lineTo(bx * scale, by * scale);
+        ctx.lineWidth = lineWidth;
+        ctx.strokeStyle = color;
+        ctx.stroke();
+    }
+
+    // 오른쪽 신체 부위에 해당하는 키포인트만 연결하여 스켈레톤을 그리는 함수
+    function drawRightSideSkeleton(keypoints, minConfidence, ctx, scale = 1) {
+        const connectedParts = [
+            ['rightShoulder', 'rightElbow'],
+            ['rightElbow', 'rightWrist'],
+            ['rightShoulder', 'rightHip'],
+            ['rightHip', 'rightKnee'],
+            ['rightKnee', 'rightAnkle']
+        ];
+    
+    connectedParts.forEach((parts) => {
+        const partA = keypoints.find(part => part.part === parts[0]);
+        const partB = keypoints.find(part => part.part === parts[1]);
+
+        if (partA && partB && partA.score > minConfidence && partB.score > minConfidence) {
+            drawSegment(
+                toTuple(partA.position), toTuple(partB.position), color,
+                scale, ctx);
+        }
+    });
+    }
+    // 오른쪽 신체 부위의 키포인트만 그리는 함수
+    function drawRightSideKeypoints(keypoints, minConfidence, ctx, scale = 1) {
+        keypoints.forEach((keypoint) => {
+            if (keypoint.score > minConfidence && keypoint.part.includes('right')) {
+                const {y, x} = keypoint.position;
+                drawPoint(ctx, y * scale, x * scale, 3, color);
+            }
+        });
+    }
+
+    /**
+     * 포즈의 바운딩 박스 그리는 함수 ex) 전신 이미지인 경우 , 코에서 시작해서 발목까지 바운딩박스는 확장.
+     */
+    function drawBoundingBox(keypoints, ctx) {
+        const boundingBox = posenet.getBoundingBox(keypoints);
+
+        ctx.rect(
+            boundingBox.minX, boundingBox.minY, boundingBox.maxX - boundingBox.minX,
+            boundingBox.maxY - boundingBox.minY);
+
+        ctx.strokeStyle = boundingBoxColor;
+        ctx.stroke();
+    }
+
+</script>
+
+</html>
